@@ -29,6 +29,7 @@
       max-width: 400px;
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
       z-index: 10;
+      transition: opacity 0.3s ease, transform 0.3s ease;
     }
 
     #controls.hidden {
@@ -45,6 +46,7 @@
       border-radius: 12px;
       font-size: 16px;
       outline: none;
+      transition: transform 0.2s ease;
     }
 
     #controls input {
@@ -61,12 +63,14 @@
 
     #controls button:hover {
       background: #0072ff;
+      transform: scale(1.05);
     }
 
     #status {
       font-size: 14px;
       color: #ccc;
       margin-top: 10px;
+      transition: color 0.3s ease;
     }
 
     #video-container {
@@ -92,7 +96,6 @@
       object-fit: cover;
       position: absolute;
       border-radius: 8px;
-      background-color: #000;
     }
 
     #localVideo {
@@ -129,10 +132,12 @@
       align-items: center;
       justify-content: center;
       cursor: pointer;
+      transition: background 0.3s ease, transform 0.2s ease;
     }
 
     .control-btn:hover {
       background-color: rgba(255, 255, 255, 0.3);
+      transform: scale(1.1);
     }
 
     .end-btn {
@@ -145,6 +150,16 @@
       color: #aad;
       word-break: break-word;
       cursor: pointer;
+    }
+
+    .loading {
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
     }
 
     @media (max-width: 600px) {
@@ -183,6 +198,7 @@
   </div>
 
   <script>
+    // Lazy-load PeerJS
     function loadPeerJS() {
       return new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -193,6 +209,7 @@
       });
     }
 
+    // UUID generator for room IDs
     function generateUUID() {
       return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
         const r = Math.random() * 16 | 0;
@@ -201,21 +218,24 @@
       });
     }
 
+    // Input sanitization
     function sanitizeInput(input) {
       const div = document.createElement('div');
       div.textContent = input.value;
       input.value = div.textContent;
     }
 
+    // State management
     let peer, call, localStream, micOn = true, videoOn = true, isScreenSharing = false;
-    let room = '', password = '';
-    let retryCount = 0;
+    let room = '', password = '', retryCount = 0;
     const maxRetries = 3;
+    const connectionTimeout = 10000; // 10s timeout for joining
 
     function logStatus(txt, isError = false) {
       const status = document.getElementById('status');
       status.innerText = txt;
       status.style.color = isError ? '#f88' : '#ccc';
+      status.classList.toggle('loading', txt.includes('Retrying') || txt.includes('Connecting'));
     }
 
     function toggleControls(show) {
@@ -225,11 +245,17 @@
 
     async function startCamera() {
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        const constraints = {
+          video: {
+            width: { ideal: window.innerWidth < 600 ? 640 : 1280 },
+            height: { ideal: window.innerWidth < 600 ? 360 : 720 },
+            frameRate: { ideal: 30 }
+          },
           audio: { echoCancellation: true, noiseSuppression: true }
-        });
+        };
+        localStream = await navigator.mediaDevices.getUserMedia(constraints);
         document.getElementById('localVideo').srcObject = localStream;
+        isScreenSharing = false;
       } catch (err) {
         logStatus('Camera access denied: ' + err.message, true);
         throw err;
@@ -238,15 +264,41 @@
 
     async function shareScreen() {
       try {
+        if (isScreenSharing) {
+          // Switch back to camera
+          if (localStream) localStream.getTracks().forEach(t => t.stop());
+          await startCamera();
+          logStatus('Switched to camera');
+          if (call) {
+            call.close();
+            call = peer.call(room, localStream);
+            call.on('stream', stream => {
+              document.getElementById('remoteVideo').srcObject = stream;
+              logStatus('Connected');
+            });
+            call.on('error', err => logStatus(`Call error: ${err.message}`, true));
+          }
+          return;
+        }
+
+        // Start screen sharing
         if (localStream) localStream.getTracks().forEach(t => t.stop());
         localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         document.getElementById('localVideo').srcObject = localStream;
         isScreenSharing = true;
-        if (call) call.close();
-        call = peer.call(room, localStream);
-        call.on('stream', stream => document.getElementById('remoteVideo').srcObject = stream);
+        logStatus('Screen sharing active');
+        if (call) {
+          call.close();
+          call = peer.call(room, localStream);
+          call.on('stream', stream => {
+            document.getElementById('remoteVideo').srcObject = stream;
+            logStatus('Connected');
+          });
+          call.on('error', err => logStatus(`Call error: ${err.message}`, true));
+        }
       } catch (err) {
         logStatus('Screen sharing failed: ' + err.message, true);
+        await startCamera(); // Fallback to camera
       }
     }
 
@@ -286,13 +338,17 @@
       if (!rid) rid = generateUUID();
       if (!pass) return logStatus('Password is required', true);
 
+      retryCount = 0; // Reset retries
       try {
         const Peer = await loadPeerJS();
         password = pass;
         room = btoa(`${rid}|${pass}`);
         peer = new Peer(room, {
           config: {
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
           }
         });
 
@@ -311,6 +367,8 @@
             document.getElementById('remoteVideo').srcObject = stream;
             logStatus('Connected');
           });
+          call.on('error', err => logStatus(`Call error: ${err.message}`, true));
+          call.on('close', () => logStatus('Call ended by remote peer', true));
         });
 
         peer.on('error', async err => {
@@ -319,11 +377,11 @@
             logStatus(`Retrying... (${retryCount}/${maxRetries})`, true);
             setTimeout(createRoom, 2000);
           } else {
-            logStatus('Failed to connect after retries', true);
+            logStatus(`Failed to connect: ${err.message}`, true);
           }
         });
       } catch (err) {
-        logStatus('Init failed: ' + err.message, true);
+        logStatus(`Init failed: ${err.message}`, true);
       }
     }
 
@@ -332,13 +390,17 @@
       const pass = document.getElementById('roomPass').value.trim();
       if (!rid || !pass) return logStatus('Room ID and Password required', true);
 
+      retryCount = 0; // Reset retries
       try {
         const Peer = await loadPeerJS();
         password = pass;
         room = btoa(`${rid}|${pass}`);
         peer = new Peer(undefined, {
           config: {
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
           }
         });
 
@@ -347,10 +409,25 @@
           await startCamera();
           if (call) call.close();
           call = peer.call(room, localStream);
+
+          // Connection timeout
+          const timeout = setTimeout(() => {
+            if (!document.getElementById('remoteVideo').srcObject) {
+              logStatus('Connection timed out', true);
+              if (call) call.close();
+            }
+          }, connectionTimeout);
+
           call.on('stream', stream => {
+            clearTimeout(timeout);
             document.getElementById('remoteVideo').srcObject = stream;
             logStatus('Connected');
           });
+          call.on('error', err => {
+            clearTimeout(timeout);
+            logStatus(`Call error: ${err.message}`, true);
+          });
+          call.on('close', () => logStatus('Call ended by remote peer', true));
         });
 
         peer.on('error', async err => {
@@ -359,11 +436,11 @@
             logStatus(`Retrying... (${retryCount}/${maxRetries})`, true);
             setTimeout(joinRoom, 2000);
           } else {
-            logStatus('Failed to connect after retries', true);
+            logStatus(`Failed to connect: ${err.message}`, true);
           }
         });
       } catch (err) {
-        logStatus('Init failed: ' + err.message, true);
+        logStatus(`Init failed: ${err.message}`, true);
       }
     }
 
@@ -381,7 +458,7 @@
       const pass = params.get('pass');
       document.getElementById('roomId').value = roomId;
       document.getElementById('roomPass').value = pass;
-      joinRoom(); // auto-join if link has room & pass
+      joinRoom();
     }
   </script>
 </body>
