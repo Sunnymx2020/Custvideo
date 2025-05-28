@@ -10,9 +10,9 @@
     body {
       margin: 0;
       padding: 0;
-      background: linear-gradient(135deg, #1a2a6c, #2b4c9b, #4a69bd);
+      background: linear-gradient(135deg, #0d1117, #161b22, #21262d);
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: #f0f4ff;
+      color: #fff;
       overflow: hidden;
     }
 
@@ -21,28 +21,23 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      background: rgba(30, 60, 114, 0.8);
+      background: rgba(0, 0, 0, 0.7);
       backdrop-filter: blur(12px);
       border-radius: 24px;
       padding: 40px;
       text-align: center;
       width: 90%;
       max-width: 450px;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
       z-index: 10;
-      animation: fadeIn 0.5s ease-in-out;
-    }
-
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translate(-50%, -60%); }
-      to { opacity: 1; transform: translate(-50%, -50%); }
+      transition: opacity 0.3s ease;
     }
 
     #controls h2 {
       margin: 0 0 20px;
-      font-size: 26px;
+      font-size: 24px;
       font-weight: 600;
-      color: #e0e7ff;
+      color: #e6edf3;
     }
 
     #controls input, #controls button {
@@ -57,19 +52,17 @@
     }
 
     #controls input {
-      background: rgba(20, 40, 80, 0.7);
-      color: #f0f4ff;
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
       padding-left: 16px;
     }
 
     #controls input::placeholder {
-      color: #b3c8ff;
+      color: #8b949e;
     }
 
     #controls input:focus {
       box-shadow: 0 0 10px rgba(0, 123, 255, 0.5);
-      border-color: rgba(0, 123, 255, 0.7);
     }
 
     #controls button {
@@ -82,7 +75,7 @@
     #controls button:hover {
       background: linear-gradient(90deg, #00aaff, #0056ff);
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0, 123, 255, 0.5);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
 
     #controls button:active {
@@ -104,7 +97,6 @@
       right: 0;
       bottom: 0;
       display: none;
-      background: rgba(0, 0, 0, 0.3);
     }
 
     video {
@@ -124,7 +116,7 @@
       z-index: 3;
       border-radius: 16px;
       border: 3px solid #fff;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
 
     #call-controls {
@@ -140,7 +132,7 @@
     .control-btn {
       width: 60px;
       height: 60px;
-      background: rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.1);
       border: none;
       border-radius: 16px;
       color: white;
@@ -152,9 +144,8 @@
     }
 
     .control-btn:hover {
-      background: rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.2);
       transform: scale(1.1);
-      box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
     }
 
     .control-btn:active {
@@ -173,7 +164,6 @@
 
     .end-btn:hover {
       background: linear-gradient(90deg, #e63946, #b1121f);
-      box-shadow: 0 0 10px rgba(255, 99, 71, 0.5);
     }
 
     .share-link-container {
@@ -189,16 +179,11 @@
       padding: 12px;
       font-size: 14px;
       border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      background: rgba(20, 40, 80, 0.7);
-      color: #e0e7ff;
+      border: none;
+      background: rgba(255, 255, 255, 0.1);
+      color: #e6edf3;
       word-break: break-all;
       text-align: center;
-      transition: all 0.3s ease;
-    }
-
-    .share-link.copied {
-      background: rgba(0, 123, 255, 0.3);
     }
 
     @media (max-width: 600px) {
@@ -225,7 +210,7 @@
 
 <div id="controls">
   <h2>ChatNXT Secure Call</h2>
-  <input type="text" id="roomId" placeholder="Room ID">
+  <input type="text" id="roomId" placeholder="Room ID (alphanumeric only)">
   <input type="password" id="roomPass" placeholder="Password">
   <button onclick="createRoom()">Create Room</button>
   <button onclick="joinRoom()">Join Room</button>
@@ -256,9 +241,12 @@
 <script>
   let peer, call, localStream, micOn = true;
   let room = "", password = "";
+  let connectionRetries = 0;
+  const maxRetries = 3;
 
   function logStatus(txt) {
     document.getElementById("status").innerText = txt;
+    console.log("Status:", txt);
   }
 
   function hideControls() {
@@ -267,7 +255,7 @@
   }
 
   function showShareLink() {
-    const shareLink = `${location.origin}${location.pathname}?room=${encodeURIComponent(room)}`;
+    const shareLink = `${location.origin}${location.pathname}?room=${encodeURIComponent(room)}|${encodeURIComponent(password)}`;
     document.getElementById("shareLink").value = shareLink;
     document.getElementById("shareLinkContainer").style.display = "flex";
   }
@@ -276,12 +264,13 @@
     const shareLink = document.getElementById("shareLink");
     shareLink.select();
     document.execCommand("copy");
-    shareLink.classList.add("copied");
     logStatus("Link copied to clipboard!");
-    setTimeout(() => {
-      shareLink.classList.remove("copied");
-      logStatus("Connected");
-    }, 2000);
+    setTimeout(() => logStatus("Connected"), 2000);
+  }
+
+  function validateRoomId(rid) {
+    const isValid = /^[a-zA-Z0-9_-]+$/.test(rid);
+    return isValid;
   }
 
   async function createRoom() {
@@ -292,22 +281,42 @@
       return;
     }
 
+    if (!validateRoomId(rid)) {
+      logStatus("Room ID must be alphanumeric (letters, numbers, _, - only)");
+      return;
+    }
+
     password = pass;
-    room = rid + "|" + pass;
+    room = btoa(rid); // Encode room ID to avoid special characters
 
     try {
-      peer = new Peer(room, { debug: 2 });
+      peer = new Peer(room, {
+        host: 'peerjs-server.herokuapp.com',
+        port: 443,
+        secure: true,
+        debug: 2
+      });
+
       peer.on('open', async () => {
         console.log("PeerJS connection opened with ID:", room);
         logStatus("Waiting for someone to join...");
+        connectionRetries = 0;
         await startCamera();
         hideControls();
         showShareLink();
       });
 
       peer.on('error', (err) => {
-        console.error("PeerJS error:", err);
-        logStatus("Failed to create room: " + err.message);
+        console.error("PeerJS error:", err.type, err.message);
+        if (err.type === 'peer-unavailable' && connectionRetries < maxRetries) {
+          connectionRetries++;
+          logStatus(`Retrying connection (${connectionRetries}/${maxRetries})...`);
+          setTimeout(createRoom, 2000);
+        } else if (err.type === 'invalid-id') {
+          logStatus("Invalid Room ID. Use alphanumeric characters only.");
+        } else {
+          logStatus(`Failed to create room: ${err.message}`);
+        }
       });
 
       peer.on('call', incomingCall => {
@@ -317,6 +326,21 @@
           document.getElementById("remoteVideo").srcObject = stream;
           logStatus("Connected");
         });
+        incomingCall.on('error', (err) => {
+          console.error("Call error:", err);
+          logStatus("Call error occurred");
+        });
+      });
+
+      peer.on('disconnected', () => {
+        console.log("PeerJS disconnected");
+        if (connectionRetries < maxRetries) {
+          connectionRetries++;
+          logStatus(`Reconnecting (${connectionRetries}/${maxRetries})...`);
+          peer.reconnect();
+        } else {
+          logStatus("Connection lost. Please try again.");
+        }
       });
     } catch (err) {
       console.error("Create room error:", err);
@@ -332,6 +356,11 @@
       return;
     }
 
+    if (!validateRoomId(rid)) {
+      logStatus("Room ID must be alphanumeric (letters, numbers, _, - only)");
+      return;
+    }
+
     if (!pass) {
       pass = prompt("Enter the room password:");
       if (!pass) {
@@ -341,10 +370,16 @@
     }
 
     password = pass;
-    room = rid + "|" + pass;
+    room = btoa(rid);
 
     try {
-      peer = new Peer({ debug: 2 });
+      peer = new Peer({
+        host: 'peerjs-server.herokuapp.com',
+        port: 443,
+        secure: true,
+        debug: 2
+      });
+
       peer.on('open', async () => {
         console.log("PeerJS join opened");
         hideControls();
@@ -355,15 +390,29 @@
             document.getElementById("remoteVideo").srcObject = stream;
             logStatus("Connected");
           });
+          call.on('error', (err) => {
+            console.error("Call error:", err);
+            logStatus("Failed to connect to room");
+          });
         } else {
-          logStatus("Failed to connect to room");
-          endCall();
+          logStatus("Failed to connect to room. Check Room ID and Password.");
         }
       });
 
       peer.on('error', (err) => {
-        console.error("PeerJS error:", err);
-        logStatus("Failed to join room: " + err.message);
+        console.error("PeerJS error:", err.type, err.message);
+        logStatus(`Failed to join room: ${err.type === 'peer-unavailable' ? 'Invalid Room ID or Password' : err.message}`);
+      });
+
+      peer.on('disconnected', () => {
+        console.log("PeerJS disconnected");
+        if (connectionRetries < maxRetries) {
+          connectionRetries++;
+          logStatus(`Reconnecting (${connectionRetries}/${maxRetries})...`);
+          peer.reconnect();
+        } else {
+          logStatus("Connection lost. Please try again.");
+        }
       });
     } catch (err) {
       console.error("Join room error:", err);
@@ -378,6 +427,7 @@
     } catch (err) {
       console.error("Camera error:", err);
       logStatus("Failed to access camera/mic. Check permissions.");
+      throw err;
     }
   }
 
@@ -396,6 +446,7 @@
 
   function endCall() {
     if (call) call.close();
+    if (peer) peer.destroy();
     if (localStream) localStream.getTracks().forEach(t => t.stop());
     location.reload();
   }
