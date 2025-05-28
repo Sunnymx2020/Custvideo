@@ -262,4 +262,122 @@
       if (localStream) {
         videoOn = !videoOn;
         localStream.getVideoTracks().forEach(track => track.enabled = videoOn);
-        logStatus(videoOn ?
+        logStatus(videoOn ? 'Video On' : 'Video Off');
+      }
+    }
+
+    function copyShareLink() {
+      const shareLink = document.getElementById('shareLink').innerText.replace('Share this link: ', '');
+      navigator.clipboard.writeText(shareLink).then(() => {
+        logStatus('Link copied to clipboard!');
+      });
+    }
+
+    function showShareLink(roomId, password) {
+      const url = `${location.origin}${location.pathname}?room=${encodeURIComponent(roomId)}&pass=${encodeURIComponent(password)}`;
+      const shareLink = document.getElementById('shareLink');
+      shareLink.innerText = 'Share this link: ' + url;
+      shareLink.title = 'Click to copy';
+    }
+
+    async function createRoom() {
+      let rid = document.getElementById('roomId').value.trim();
+      const pass = document.getElementById('roomPass').value.trim();
+      if (!rid) rid = generateUUID();
+      if (!pass) return logStatus('Password is required', true);
+
+      try {
+        const Peer = await loadPeerJS();
+        password = pass;
+        room = btoa(`${rid}|${pass}`);
+        peer = new Peer(room, {
+          config: {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+          }
+        });
+
+        peer.on('open', async () => {
+          logStatus('Waiting for someone to join...');
+          showShareLink(rid, pass);
+          await startCamera();
+          toggleControls(false);
+        });
+
+        peer.on('call', incomingCall => {
+          if (call) call.close();
+          call = incomingCall;
+          call.answer(localStream);
+          call.on('stream', stream => {
+            document.getElementById('remoteVideo').srcObject = stream;
+            logStatus('Connected');
+          });
+        });
+
+        peer.on('error', async err => {
+          if (retryCount < maxRetries) {
+            retryCount++;
+            logStatus(`Retrying... (${retryCount}/${maxRetries})`, true);
+            setTimeout(createRoom, 2000);
+          } else {
+            logStatus('Failed to connect after retries', true);
+          }
+        });
+      } catch (err) {
+        logStatus('Init failed: ' + err.message, true);
+      }
+    }
+
+    async function joinRoom() {
+      const rid = document.getElementById('roomId').value.trim();
+      const pass = document.getElementById('roomPass').value.trim();
+      if (!rid || !pass) return logStatus('Room ID and Password required', true);
+
+      try {
+        const Peer = await loadPeerJS();
+        password = pass;
+        room = btoa(`${rid}|${pass}`);
+        peer = new Peer(undefined, {
+          config: {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+          }
+        });
+
+        peer.on('open', async () => {
+          toggleControls(false);
+          await startCamera();
+          if (call) call.close();
+          call = peer.call(room, localStream);
+          call.on('stream', stream => {
+            document.getElementById('remoteVideo').srcObject = stream;
+            logStatus('Connected');
+          });
+        });
+
+        peer.on('error', async err => {
+          if (retryCount < maxRetries) {
+            retryCount++;
+            logStatus(`Retrying... (${retryCount}/${maxRetries})`, true);
+            setTimeout(joinRoom, 2000);
+          } else {
+            logStatus('Failed to connect after retries', true);
+          }
+        });
+      } catch (err) {
+        logStatus('Init failed: ' + err.message, true);
+      }
+    }
+
+    function endCall() {
+      if (call) call.close();
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
+      if (peer) peer.destroy();
+      location.reload();
+    }
+
+    // Auto-join from link
+    const params = new URLSearchParams(location.search);
+    if (params.has('room') && params.has('pass')) {
+      const roomId = params.get('room');
+      const pass = params.get('pass');
+      document.getElementById('roomId').value = roomId;
+      document.getElementById('roomPass').value = pass;
