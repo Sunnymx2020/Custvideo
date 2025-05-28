@@ -55,8 +55,13 @@
       font-size: 16px;
       border-radius: 6px;
       border: none;
+      transition: all 0.3s ease;
     }
-    #controls button {
+    #controls input:focus {
+      outline: none;
+      box-shadow: 0 0 8px rgba(0, 123, 255, 0.5);
+    }
+    #controls button, #call-controls button {
       padding: 12px;
       width: 80%;
       margin: 5px 0;
@@ -65,11 +70,23 @@
       color: white;
       border: none;
       border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    #controls button:hover, #call-controls button:hover {
+      background: #0056b3;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    #controls button:active, #call-controls button:active {
+      transform: translateY(0);
+      box-shadow: none;
     }
     #status {
       margin-top: 10px;
       font-size: 14px;
       color: #ccc;
+      transition: color 0.3s ease;
     }
     #call-controls {
       position: absolute;
@@ -89,9 +106,36 @@
       color: white;
       border: none;
       cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    .control-btn:hover {
+      background-color: rgba(255, 255, 255, 0.3);
+      transform: scale(1.1);
+    }
+    .control-btn:active {
+      transform: scale(0.95);
     }
     .end-btn {
       background-color: red;
+    }
+    .end-btn:hover {
+      background-color: darkred;
+    }
+    #shareLinkContainer {
+      margin-top: 10px;
+      width: 80%;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+    }
+    #shareLink {
+      width: 100%;
+      padding: 10px;
+      font-size: 14px;
+      border-radius: 6px;
+      border: none;
+      background: #333;
+      color: #fff;
     }
   </style>
 </head>
@@ -103,6 +147,10 @@
   <button onclick="createRoom()">Create Room</button>
   <button onclick="joinRoom()">Join Room</button>
   <div id="status">Ready</div>
+  <div id="shareLinkContainer">
+    <input type="text" id="shareLink" readonly>
+    <button onclick="copyLink()">Copy Link</button>
+  </div>
 </div>
 
 <div id="video-container" style="display: none;">
@@ -111,6 +159,7 @@
 
   <div id="call-controls">
     <button class="control-btn" onclick="toggleMic()">🎙️</button>
+    <button class="control-btn" onclick="shareRoom()">📤</button>
     <button class="control-btn end-btn" onclick="endCall()">❌</button>
   </div>
 </div>
@@ -128,6 +177,20 @@
     document.getElementById("video-container").style.display = "block";
   }
 
+  function showShareLink() {
+    const shareLink = `${location.origin}?room=${encodeURIComponent(room)}`;
+    document.getElementById("shareLink").value = shareLink;
+    document.getElementById("shareLinkContainer").style.display = "flex";
+  }
+
+  function copyLink() {
+    const shareLink = document.getElementById("shareLink");
+    shareLink.select();
+    document.execCommand("copy");
+    logStatus("Link copied to clipboard!");
+    setTimeout(() => logStatus("Connected"), 2000);
+  }
+
   async function createRoom() {
     const rid = document.getElementById("roomId").value.trim();
     const pass = document.getElementById("roomPass").value.trim();
@@ -141,6 +204,7 @@
       logStatus("Waiting for user to join...");
       startCamera();
       hideControls();
+      showShareLink();
     });
 
     peer.on('call', incomingCall => {
@@ -154,8 +218,13 @@
 
   async function joinRoom() {
     const rid = document.getElementById("roomId").value.trim();
-    const pass = document.getElementById("roomPass").value.trim();
-    if (!rid || !pass) return alert("Enter room ID and password");
+    let pass = document.getElementById("roomPass").value.trim();
+    if (!rid) return alert("Enter room ID");
+
+    if (!pass) {
+      pass = prompt("Enter the room password:");
+      if (!pass) return alert("Password is required");
+    }
 
     password = pass;
     room = rid + "|" + pass;
@@ -166,10 +235,15 @@
       await startCamera();
 
       const outgoingCall = peer.call(room, localStream);
-      outgoingCall.on('stream', stream => {
-        document.getElementById("remoteVideo").srcObject = stream;
-        logStatus("Connected");
-      });
+      if (outgoingCall) {
+        outgoingCall.on('stream', stream => {
+          document.getElementById("remoteVideo").srcObject = stream;
+          logStatus("Connected");
+        });
+      } else {
+        logStatus("Failed to connect to room");
+        endCall();
+      }
     });
   }
 
@@ -186,6 +260,11 @@
     }
   }
 
+  function shareRoom() {
+    showShareLink();
+    copyLink();
+  }
+
   function endCall() {
     if (call) call.close();
     if (localStream) localStream.getTracks().forEach(t => t.stop());
@@ -196,9 +275,9 @@
   if (params.has("room")) {
     const roomParam = params.get("room");
     const split = roomParam.split("|");
-    if (split.length === 2) {
+    if (split.length >= 1) {
       document.getElementById("roomId").value = split[0];
-      document.getElementById("roomPass").value = split[1];
+      document.getElementById("roomPass").value = split[1] || "";
       joinRoom();
     }
   }
