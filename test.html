@@ -1,0 +1,14 @@
+<html>
+  <body style="background:black;color:white">
+    <h1>WebRTC Test</h1>
+    <video id="local" autoplay playsinline muted></video>
+    <script>
+      navigator.mediaDevices.getUserMedia({video:true,audio:true})
+      .then(stream => {
+        document.getElementById('local').srcObject = stream;
+      }).catch(err => {
+        alert("Error: " + err.message);
+      });
+    </script>
+  </body>
+</html>
