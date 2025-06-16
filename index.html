@@ -45,9 +45,10 @@
     const remoteVideo = document.getElementById('remoteVideo');
 
     let peer;
-    const ws = new WebSocket('wss://your-free-signaling-server.glitch.me'); // Replace with your own if needed
+    const ws = new WebSocket('wss://your-free-signaling-server.glitch.me'); // Change this to your actual signaling server
 
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+    // Call this function when media permission is granted
+    function initPeer(stream) {
       localVideo.srcObject = stream;
       localVideo.muted = true;
 
@@ -62,9 +63,13 @@
       });
 
       ws.onmessage = msg => {
-        const { room: incomingRoom, signal } = JSON.parse(msg.data);
-        if (incomingRoom === room) {
-          peer.signal(signal);
+        try {
+          const { room: incomingRoom, signal } = JSON.parse(msg.data);
+          if (incomingRoom === room) {
+            peer.signal(signal);
+          }
+        } catch (e) {
+          console.error("Invalid signal:", msg.data);
         }
       };
 
@@ -75,8 +80,26 @@
       peer.on('error', err => {
         alert("Peer error: " + err.message);
       });
-    }).catch(err => {
-      alert("Permission denied or no media device: " + err.message);
+    }
+
+    // Request media
+    function requestMedia() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("❌ WebRTC not supported on this browser");
+        return;
+      }
+
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then(initPeer)
+        .catch(err => {
+          alert("🚫 Permission denied or no media device:\n\n" + err.message);
+          console.error(err);
+        });
+    }
+
+    // Wait for page load before requesting media
+    document.addEventListener("DOMContentLoaded", () => {
+      requestMedia();
     });
   </script>
 </body>
