@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>WebRTC Video Call</title>
+  <title>WebRTC:Bysunny</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body {
@@ -52,6 +52,11 @@
   <video id="localVideo" autoplay muted playsinline></video>
 
   <script>
+    // Configuration (replace signalingServer with server.json content if available)
+    const serverConfig = {
+      signalingServer: 'wss://free-socket-server.herokuapp.com' // Placeholder; update with server.json or reliable WebSocket URL
+    };
+
     const urlParams = new URLSearchParams(window.location.search);
     const roomId = urlParams.get('room') || 'demo';
     const statusDiv = document.getElementById('status');
@@ -63,25 +68,25 @@
     let ws;
     let connectedUsers = 0;
     let isInitiator = false;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 3;
 
     function updateStatus(message) {
       statusDiv.textContent = `${message} (Users: ${connectedUsers})`;
     }
 
-    async function start() {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = localStream;
-        connectedUsers = 1;
+    function connectWebSocket() {
+      ws = new WebSocket(serverConfig.signalingServer);
+      
+      ws.onopen = () => {
+        console.log('WebSocket connected');
+        reconnectAttempts = 0;
         updateStatus('Waiting for peer...');
+        ws.send(JSON.stringify({ type: 'join', room: roomId }));
+      };
 
-        ws = new WebSocket('wss://socketsbay.com/wss/v2/1/demo/');
-        ws.onopen = () => {
-          console.log('WebSocket connected');
-          ws.send(JSON.stringify({ type: 'join', room: roomId }));
-        };
-
-        ws.onmessage = async (event) => {
+      ws.onmessage = async (event) => {
+        try {
           const data = JSON.parse(event.data);
           if (data.type === 'peer') {
             isInitiator = true;
@@ -97,12 +102,42 @@
           } else if (data.type === 'candidate') {
             await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
           }
-        };
+        } catch (err) {
+          console.error('WebSocket message error:', err);
+          updateStatus('Signaling error');
+        }
+      };
 
-        ws.onerror = () => updateStatus('WebSocket error');
-        ws.onclose = () => updateStatus('Disconnected');
+      ws.onerror = () => {
+        updateStatus('WebSocket error');
+        attemptReconnect();
+      };
 
+      ws.onclose = () => {
+        updateStatus('Disconnected');
+        attemptReconnect();
+      };
+    }
+
+    function attemptReconnect() {
+      if (reconnectAttempts < maxReconnectAttempts) {
+        reconnectAttempts++;
+        updateStatus(`Reconnecting (${reconnectAttempts}/${maxReconnectAttempts})...`);
+        setTimeout(connectWebSocket, 2000);
+      } else {
+        updateStatus('Failed to connect to signaling server');
+      }
+    }
+
+    async function start() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localVideo.srcObject = localStream;
+        connectedUsers = 1;
+        updateStatus('Waiting for peer...');
+        connectWebSocket();
       } catch (err) {
+        console.error('Media error:', err);
         updateStatus('Media error');
         alert(`Camera/mic error: ${err.message}`);
       }
@@ -112,7 +147,9 @@
       peerConnection = new RTCPeerConnection({
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
+          { urls: 'stun:stun1.l.google.com:19302' },
+          // Add TURN server credentials here if available
+          // { urls: 'turn:global.turn.twilio.com:3478', username: 'your-username', credential: 'your-credential' }
         ]
       });
 
