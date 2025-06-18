@@ -28,6 +28,7 @@
     const callerId = urlParams.get('calling');
     const receiverId = urlParams.get('reciver');
     const myId = callerId || receiverId;
+    const targetId = callerId ? receiverId : callerId;
     const isInitiator = !!callerId;
 
     const socket = io('ws://cubic-receptive-drop.glitch.me');
@@ -35,18 +36,20 @@
     const remoteVideo = document.getElementById('remoteVideo');
 
     let peer;
+    let mediaStream = null;
+    let isReady = false;
 
-    function initPeer(stream) {
+    function createPeer() {
       peer = new SimplePeer({
         initiator: isInitiator,
         trickle: false,
-        stream
+        stream: mediaStream
       });
 
       peer.on('signal', data => {
         const type = data.type;
         socket.emit(type, {
-          target: isInitiator ? receiverId : callerId,
+          target: targetId,
           name: myId,
           data
         });
@@ -61,31 +64,53 @@
       });
     }
 
-    socket.on('connect', () => {
-      console.log('Connected to signaling server');
-      socket.emit('subscribe', myId);
-    });
-
+    // Signal handlers
     socket.on('offer', msg => {
-      console.log('Received offer');
+      console.log('[Signal] Received offer');
       peer.signal(msg.data);
     });
 
     socket.on('answer', msg => {
-      console.log('Received answer');
+      console.log('[Signal] Received answer');
       peer.signal(msg.data);
     });
 
     socket.on('ice-candidate', msg => {
-      console.log('Received ICE candidate');
+      console.log('[Signal] Received ICE candidate');
       peer.signal(msg.data);
     });
 
+    // Subscribe to signaling server
+    socket.on('connect', () => {
+      console.log('[Socket] Connected');
+      socket.emit('subscribe', myId);
+    });
+
+    socket.on('subscribed', () => {
+      console.log('[Socket] Subscribed as:', myId);
+      isReady = true;
+
+      // Initiator waits until both are ready
+      if (mediaStream && isInitiator) {
+        createPeer();
+      }
+    });
+
+    // Receiver creates peer immediately after media access
+    function handleMedia(stream) {
+      mediaStream = stream;
+      localVideo.srcObject = stream;
+
+      // If not initiator, create peer immediately
+      if (!isInitiator) {
+        createPeer();
+      } else if (isReady) {
+        createPeer();
+      }
+    }
+
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        localVideo.srcObject = stream;
-        initPeer(stream);
-      })
+      .then(handleMedia)
       .catch(err => {
         alert("Media access denied: " + err.message);
         console.error(err);
