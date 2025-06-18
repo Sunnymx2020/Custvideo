@@ -9,6 +9,7 @@
       position: fixed; top: 0; left: 0;
       width: 100%; height: 100%;
       object-fit: cover;
+      background: #000;
     }
     #localVideo {
       position: fixed; bottom: 10px; right: 10px;
@@ -26,7 +27,7 @@
   <script>
     const urlParams = new URLSearchParams(window.location.search);
     const callerId = urlParams.get('calling');
-    const receiverId = urlParams.get('reciver'); // Note: typo matches current backend logic
+    const receiverId = urlParams.get('reciver'); // NOTE: keep this typo unless backend fixed
     const myId = callerId || receiverId;
     const targetId = callerId ? receiverId : callerId;
     const isInitiator = !!callerId;
@@ -36,19 +37,25 @@
     const remoteVideo = document.getElementById('remoteVideo');
 
     let peer;
-    let mediaStream = null;
-    let isReady = false;
+    let localStream = null;
+    let isSubscribed = false;
+    let hasStarted = false;
 
-    function createPeer() {
+    // Start peer connection once we're subscribed + got camera
+    function tryStartPeer() {
+      if (hasStarted || !isSubscribed || !localStream) return;
+      console.log('[Peer] Creating peer now');
+      hasStarted = true;
+
       peer = new SimplePeer({
         initiator: isInitiator,
         trickle: false,
-        stream: mediaStream
+        stream: localStream
       });
 
       peer.on('signal', data => {
-        const type = data.type;
-        socket.emit(type, {
+        console.log('[Signal] Sending:', data.type);
+        socket.emit(data.type, {
           target: targetId,
           name: myId,
           data
@@ -56,6 +63,7 @@
       });
 
       peer.on('stream', remoteStream => {
+        console.log('[Peer] Got remote stream!');
         remoteVideo.srcObject = remoteStream;
       });
 
@@ -64,23 +72,23 @@
       });
     }
 
-    // Signal handlers
+    // Handle incoming signaling
     socket.on('offer', msg => {
-      console.log('[Signal] Received offer');
-      peer.signal(msg.data);
+      console.log('[Signal] Got offer');
+      if (peer) peer.signal(msg.data);
     });
 
     socket.on('answer', msg => {
-      console.log('[Signal] Received answer');
-      peer.signal(msg.data);
+      console.log('[Signal] Got answer');
+      if (peer) peer.signal(msg.data);
     });
 
     socket.on('ice-candidate', msg => {
-      console.log('[Signal] Received ICE candidate');
-      peer.signal(msg.data);
+      console.log('[Signal] Got ICE candidate');
+      if (peer) peer.signal(msg.data);
     });
 
-    // Subscribe to signaling server
+    // Subscribe and get confirmation
     socket.on('connect', () => {
       console.log('[Socket] Connected');
       socket.emit('subscribe', myId);
@@ -88,31 +96,19 @@
 
     socket.on('subscribed', () => {
       console.log('[Socket] Subscribed as:', myId);
-      isReady = true;
-
-      // Initiator waits until both are ready
-      if (mediaStream && isInitiator) {
-        createPeer();
-      }
+      isSubscribed = true;
+      tryStartPeer();
     });
 
-    // Receiver creates peer immediately after media access
-    function handleMedia(stream) {
-      mediaStream = stream;
-      localVideo.srcObject = stream;
-
-      // If not initiator, create peer immediately
-      if (!isInitiator) {
-        createPeer();
-      } else if (isReady) {
-        createPeer();
-      }
-    }
-
+    // Get media
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(handleMedia)
+      .then(stream => {
+        localVideo.srcObject = stream;
+        localStream = stream;
+        tryStartPeer();
+      })
       .catch(err => {
-        alert("Media access denied: " + err.message);
+        alert("Camera/mic access failed:\n" + err.message);
         console.error(err);
       });
   </script>
