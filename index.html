@@ -38,16 +38,18 @@
   <script src="https://cdn.jsdelivr.net/npm/simple-peer@9/simplepeer.min.js"></script>
   <script>
     const urlParams = new URLSearchParams(window.location.search);
-    const room = urlParams.get('room') || 'default';
-    const isInitiator = urlParams.get('caller') === 'true';
+    const callerId = urlParams.get('calling');
+    const receiverId = urlParams.get('reciver');
+
+    const isInitiator = !!callerId; // if "calling" param exists, it's initiator
+    const room = callerId || receiverId || 'default'; // room name is shared userid
 
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
 
     let peer;
-    const ws = new WebSocket('wss://your-free-signaling-server.glitch.me'); // Change this to your actual signaling server
+    const ws = new WebSocket('wss://your-free-signaling-server.glitch.me'); // Replace with your real signaling server
 
-    // Call this function when media permission is granted
     function initPeer(stream) {
       localVideo.srcObject = stream;
       localVideo.muted = true;
@@ -82,7 +84,6 @@
       });
     }
 
-    // Request media
     function requestMedia() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         alert("❌ WebRTC not supported on this browser");
@@ -97,7 +98,6 @@
         });
     }
 
-    // Wait for page load before requesting media
     document.addEventListener("DOMContentLoaded", () => {
       requestMedia();
     });
