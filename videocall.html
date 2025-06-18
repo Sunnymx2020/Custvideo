@@ -1,465 +1,162 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ChatNXT Video Call</title>
+  <meta charset="utf-8">
+  <title>WebRTC Video Call</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 0;
-      background: linear-gradient(145deg, #0f2027, #203a43, #2c5364);
-      font-family: 'Segoe UI', sans-serif;
-      color: #fff;
+      background: #000;
       overflow: hidden;
+      font-family: Arial, sans-serif;
     }
-
-    #controls {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(255, 255, 255, 0.05);
-      backdrop-filter: blur(10px);
-      border-radius: 20px;
-      padding: 30px;
-      text-align: center;
-      width: 90%;
-      max-width: 400px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-      z-index: 10;
-      transition: opacity 0.3s ease, transform 0.3s ease;
+    video {
+      background: #000;
     }
-
-    #controls.hidden {
-      opacity: 0;
-      transform: translate(-50%, -60%);
-      pointer-events: none;
-    }
-
-    #controls input, #controls button {
-      width: 100%;
-      padding: 14px;
-      margin: 10px 0;
-      border: none;
-      border-radius: 12px;
-      font-size: 16px;
-      outline: none;
-      transition: transform 0.2s ease;
-    }
-
-    #controls input {
-      background: rgba(255, 255, 255, 0.1);
-      color: #fff;
-    }
-
-    #controls button {
-      background: #00c6ff;
-      color: #fff;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-    #controls button:hover {
-      background: #0072ff;
-      transform: scale(1.05);
-    }
-
-    #status {
-      font-size: 14px;
-      color: #ccc;
-      margin-top: 10px;
-      transition: color 0.3s ease;
-    }
-
-    #video-container {
-      position: absolute;
+    #remoteVideo {
+      position: fixed;
       top: 0;
       left: 0;
-      right: 0;
-      bottom: 0;
-      background-color: #111;
-      display: none;
-      opacity: 0;
-      transition: opacity 0.5s ease;
-    }
-
-    #video-container.active {
-      display: block;
-      opacity: 1;
-    }
-
-    video {
       width: 100%;
       height: 100%;
       object-fit: cover;
-      position: absolute;
-      border-radius: 8px;
     }
-
     #localVideo {
-      width: 140px;
-      height: 180px;
-      position: absolute;
-      bottom: 20px;
-      right: 20px;
-      z-index: 3;
-      border-radius: 16px;
-      border: 3px solid #fff;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      width: 120px;
+      height: 160px;
+      border: 2px solid white;
+      z-index: 10;
+      object-fit: cover;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(255,255,255,0.3);
     }
-
-    #call-controls {
-      position: absolute;
-      bottom: 30px;
-      width: 100%;
-      display: flex;
-      justify-content: center;
-      gap: 20px;
-      z-index: 4;
-    }
-
-    .control-btn {
-      width: 64px;
-      height: 64px;
-      background-color: rgba(255, 255, 255, 0.15);
-      border: none;
-      border-radius: 50%;
+    #status {
+      position: fixed;
+      top: 10px;
+      left: 10px;
       color: white;
-      font-size: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      transition: background 0.3s ease, transform 0.2s ease;
-    }
-
-    .control-btn:hover {
-      background-color: rgba(255, 255, 255, 0.3);
-      transform: scale(1.1);
-    }
-
-    .end-btn {
-      background-color: red;
-    }
-
-    .share-link {
-      margin-top: 10px;
-      font-size: 13px;
-      color: #aad;
-      word-break: break-word;
-      cursor: pointer;
-    }
-
-    .loading {
-      animation: pulse 1.5s infinite;
-    }
-
-    @keyframes pulse {
-      0% { opacity: 1; }
-      50% { opacity: 0.5; }
-      100% { opacity: 1; }
-    }
-
-    @media (max-width: 600px) {
-      #localVideo {
-        width: 100px;
-        height: 140px;
-      }
-      .control-btn {
-        width: 50px;
-        height: 50px;
-        font-size: 20px;
-      }
+      z-index: 10;
+      background: rgba(0,0,0,0.5);
+      padding: 5px 10px;
+      border-radius: 4px;
     }
   </style>
 </head>
 <body>
-  <div id="controls">
-    <h2>🔒 ChatNXT Secure Call</h2>
-    <input type="text" id="roomId" placeholder="Room ID" oninput="sanitizeInput(this)">
-    <input type="password" id="roomPass" placeholder="Password" oninput="sanitizeInput(this)">
-    <button onclick="createRoom()">Create Room</button>
-    <button onclick="joinRoom()">Join Room</button>
-    <div id="status">Ready</div>
-    <div class="share-link" id="shareLink" onclick="copyShareLink()"></div>
-  </div>
-
-  <div id="video-container">
-    <video id="remoteVideo" autoplay playsinline></video>
-    <video id="localVideo" autoplay muted playsinline></video>
-    <div id="call-controls">
-      <button class="control-btn" onclick="toggleMic()" title="Toggle Microphone">🎙️</button>
-      <button class="control-btn" onclick="toggleVideo()" title="Toggle Video">📹</button>
-      <button class="control-btn" onclick="shareScreen()" title="Share Screen">🖥️</button>
-      <button class="control-btn end-btn" onclick="endCall()" title="End Call">❌</button>
-    </div>
-  </div>
+  <div id="status">Connecting... (Users: 0)</div>
+  <video id="remoteVideo" autoplay playsinline></video>
+  <video id="localVideo" autoplay muted playsinline></video>
 
   <script>
-    // Lazy-load PeerJS
-    function loadPeerJS() {
-      return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = 'https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js';
-        script.onload = () => resolve(window.Peer);
-        script.onerror = () => reject(new Error('Failed to load PeerJS'));
-        document.head.appendChild(script);
-      });
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomId = urlParams.get('room') || 'demo';
+    const statusDiv = document.getElementById('status');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+
+    let localStream;
+    let peerConnection;
+    let ws;
+    let connectedUsers = 0;
+    let isInitiator = false;
+
+    function updateStatus(message) {
+      statusDiv.textContent = `${message} (Users: ${connectedUsers})`;
     }
 
-    // UUID generator for room IDs
-    function generateUUID() {
-      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-        const r = Math.random() * 16 | 0;
-        const v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-      });
-    }
-
-    // Input sanitization
-    function sanitizeInput(input) {
-      const div = document.createElement('div');
-      div.textContent = input.value;
-      input.value = div.textContent;
-    }
-
-    // State management
-    let peer, call, localStream, micOn = true, videoOn = true, isScreenSharing = false;
-    let room = '', password = '', retryCount = 0;
-    const maxRetries = 3;
-    const connectionTimeout = 10000; // 10s timeout for joining
-
-    function logStatus(txt, isError = false) {
-      const status = document.getElementById('status');
-      status.innerText = txt;
-      status.style.color = isError ? '#f88' : '#ccc';
-      status.classList.toggle('loading', txt.includes('Retrying') || txt.includes('Connecting'));
-    }
-
-    function toggleControls(show) {
-      document.getElementById('controls').classList.toggle('hidden', !show);
-      document.getElementById('video-container').classList.toggle('active', show);
-    }
-
-    async function startCamera() {
+    async function start() {
       try {
-        const constraints = {
-          video: {
-            width: { ideal: window.innerWidth < 600 ? 640 : 1280 },
-            height: { ideal: window.innerWidth < 600 ? 360 : 720 },
-            frameRate: { ideal: 30 }
-          },
-          audio: { echoCancellation: true, noiseSuppression: true }
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localVideo.srcObject = localStream;
+        connectedUsers = 1;
+        updateStatus('Waiting for peer...');
+
+        ws = new WebSocket('wss://socketsbay.com/wss/v2/1/demo/');
+        ws.onopen = () => {
+          console.log('WebSocket connected');
+          ws.send(JSON.stringify({ type: 'join', room: roomId }));
         };
-        localStream = await navigator.mediaDevices.getUserMedia(constraints);
-        document.getElementById('localVideo').srcObject = localStream;
-        isScreenSharing = false;
-      } catch (err) {
-        logStatus('Camera access denied: ' + err.message, true);
-        throw err;
-      }
-    }
 
-    async function shareScreen() {
-      try {
-        if (isScreenSharing) {
-          // Switch back to camera
-          if (localStream) localStream.getTracks().forEach(t => t.stop());
-          await startCamera();
-          logStatus('Switched to camera');
-          if (call) {
-            call.close();
-            call = peer.call(room, localStream);
-            call.on('stream', stream => {
-              document.getElementById('remoteVideo').srcObject = stream;
-              logStatus('Connected');
-            });
-            call.on('error', err => logStatus(`Call error: ${err.message}`, true));
+        ws.onmessage = async (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type === 'peer') {
+            isInitiator = true;
+            await createPeerConnection();
+          } else if (data.type === 'offer') {
+            await createPeerConnection();
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            ws.send(JSON.stringify({ type: 'answer', answer, room: roomId }));
+          } else if (data.type === 'answer') {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+          } else if (data.type === 'candidate') {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
           }
-          return;
-        }
+        };
 
-        // Start screen sharing
-        if (localStream) localStream.getTracks().forEach(t => t.stop());
-        localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-        document.getElementById('localVideo').srcObject = localStream;
-        isScreenSharing = true;
-        logStatus('Screen sharing active');
-        if (call) {
-          call.close();
-          call = peer.call(room, localStream);
-          call.on('stream', stream => {
-            document.getElementById('remoteVideo').srcObject = stream;
-            logStatus('Connected');
-          });
-          call.on('error', err => logStatus(`Call error: ${err.message}`, true));
-        }
+        ws.onerror = () => updateStatus('WebSocket error');
+        ws.onclose = () => updateStatus('Disconnected');
+
       } catch (err) {
-        logStatus('Screen sharing failed: ' + err.message, true);
-        await startCamera(); // Fallback to camera
+        updateStatus('Media error');
+        alert(`Camera/mic error: ${err.message}`);
       }
     }
 
-    function toggleMic() {
-      if (localStream) {
-        micOn = !micOn;
-        localStream.getAudioTracks().forEach(track => track.enabled = micOn);
-        logStatus(micOn ? 'Mic On' : 'Mic Off');
-      }
-    }
-
-    function toggleVideo() {
-      if (localStream) {
-        videoOn = !videoOn;
-        localStream.getVideoTracks().forEach(track => track.enabled = videoOn);
-        logStatus(videoOn ? 'Video On' : 'Video Off');
-      }
-    }
-
-    function copyShareLink() {
-      const shareLink = document.getElementById('shareLink').innerText.replace('Share this link: ', '');
-      navigator.clipboard.writeText(shareLink).then(() => {
-        logStatus('Link copied to clipboard!');
+    async function createPeerConnection() {
+      peerConnection = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
       });
-    }
 
-    function showShareLink(roomId, password) {
-      const url = `${location.origin}${location.pathname}?room=${encodeURIComponent(roomId)}&pass=${encodeURIComponent(password)}`;
-      const shareLink = document.getElementById('shareLink');
-      shareLink.innerText = 'Share this link: ' + url;
-      shareLink.title = 'Click to copy';
-    }
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    async function createRoom() {
-      let rid = document.getElementById('roomId').value.trim();
-      const pass = document.getElementById('roomPass').value.trim();
-      if (!rid) rid = generateUUID();
-      if (!pass) return logStatus('Password is required', true);
+      peerConnection.ontrack = (event) => {
+        if (!remoteVideo.srcObject) {
+          remoteVideo.srcObject = event.streams[0];
+          connectedUsers = 2;
+          updateStatus('Connected');
+        }
+      };
 
-      retryCount = 0; // Reset retries
-      try {
-        const Peer = await loadPeerJS();
-        password = pass;
-        room = btoa(`${rid}|${pass}`);
-        peer = new Peer(room, {
-          config: {
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-          }
-        });
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate, room: roomId }));
+        }
+      };
 
-        peer.on('open', async () => {
-          logStatus('Waiting for someone to join...');
-          showShareLink(rid, pass);
-          await startCamera();
-          toggleControls(false);
-        });
+      peerConnection.onconnectionstatechange = () => {
+        if (peerConnection.connectionState === 'connected') {
+          connectedUsers = 2;
+          updateStatus('Connected');
+        } else if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+          connectedUsers = 1;
+          updateStatus('Call ended. Waiting for peer...');
+          remoteVideo.srcObject = null;
+        }
+      };
 
-        peer.on('call', incomingCall => {
-          if (call) call.close();
-          call = incomingCall;
-          call.answer(localStream);
-          call.on('stream', stream => {
-            document.getElementById('remoteVideo').srcObject = stream;
-            logStatus('Connected');
-          });
-          call.on('error', err => logStatus(`Call error: ${err.message}`, true));
-          call.on('close', () => logStatus('Call ended by remote peer', true));
-        });
-
-        peer.on('error', async err => {
-          if (retryCount < maxRetries) {
-            retryCount++;
-            logStatus(`Retrying... (${retryCount}/${maxRetries})`, true);
-            setTimeout(createRoom, 2000);
-          } else {
-            logStatus(`Failed to connect: ${err.message}`, true);
-          }
-        });
-      } catch (err) {
-        logStatus(`Init failed: ${err.message}`, true);
+      if (isInitiator) {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        ws.send(JSON.stringify({ type: 'offer', offer, room: roomId }));
       }
     }
 
-    async function joinRoom() {
-      const rid = document.getElementById('roomId').value.trim();
-      const pass = document.getElementById('roomPass').value.trim();
-      if (!rid || !pass) return logStatus('Room ID and Password required', true);
+    window.addEventListener('beforeunload', () => {
+      if (ws) ws.close();
+      if (peerConnection) peerConnection.close();
+      if (localStream) localStream.getTracks().forEach(track => track.stop());
+    });
 
-      retryCount = 0; // Reset retries
-      try {
-        const Peer = await loadPeerJS();
-        password = pass;
-        room = btoa(`${rid}|${pass}`);
-        peer = new Peer(undefined, {
-          config: {
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-          }
-        });
-
-        peer.on('open', async () => {
-          toggleControls(false);
-          await startCamera();
-          if (call) call.close();
-          call = peer.call(room, localStream);
-
-          // Connection timeout
-          const timeout = setTimeout(() => {
-            if (!document.getElementById('remoteVideo').srcObject) {
-              logStatus('Connection timed out', true);
-              if (call) call.close();
-            }
-          }, connectionTimeout);
-
-          call.on('stream', stream => {
-            clearTimeout(timeout);
-            document.getElementById('remoteVideo').srcObject = stream;
-            logStatus('Connected');
-          });
-          call.on('error', err => {
-            clearTimeout(timeout);
-            logStatus(`Call error: ${err.message}`, true);
-          });
-          call.on('close', () => logStatus('Call ended by remote peer', true));
-        });
-
-        peer.on('error', async err => {
-          if (retryCount < maxRetries) {
-            retryCount++;
-            logStatus(`Retrying... (${retryCount}/${maxRetries})`, true);
-            setTimeout(joinRoom, 2000);
-          } else {
-            logStatus(`Failed to connect: ${err.message}`, true);
-          }
-        });
-      } catch (err) {
-        logStatus(`Init failed: ${err.message}`, true);
-      }
-    }
-
-    function endCall() {
-      if (call) call.close();
-      if (localStream) localStream.getTracks().forEach(t => t.stop());
-      if (peer) peer.destroy();
-      location.reload();
-    }
-
-    // Auto-join from link
-    const params = new URLSearchParams(location.search);
-    if (params.has('room') && params.has('pass')) {
-      const roomId = params.get('room');
-      const pass = params.get('pass');
-      document.getElementById('roomId').value = roomId;
-      document.getElementById('roomPass').value = pass;
-      joinRoom();
-    }
+    start();
   </script>
 </body>
 </html>
