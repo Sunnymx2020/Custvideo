@@ -41,14 +41,17 @@
     const callerId = urlParams.get('calling');
     const receiverId = urlParams.get('reciver');
 
-    const isInitiator = !!callerId; // if "calling" param exists, it's initiator
-    const room = callerId || receiverId || 'default'; // room name is shared userid
+    const isInitiator = !!callerId;
+    const room = callerId || receiverId || 'default';
 
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
 
     let peer;
-    const ws = new WebSocket('wss://your-free-signaling-server.glitch.me'); // Replace with your real signaling server
+    const ws = new WebSocket('ws://cubic-receptive-drop.glitch.me');
+
+    // Buffering incoming signals before peer is created
+    const signalQueue = [];
 
     function initPeer(stream) {
       localVideo.srcObject = stream;
@@ -64,17 +67,6 @@
         ws.send(JSON.stringify({ room, signal: data }));
       });
 
-      ws.onmessage = msg => {
-        try {
-          const { room: incomingRoom, signal } = JSON.parse(msg.data);
-          if (incomingRoom === room) {
-            peer.signal(signal);
-          }
-        } catch (e) {
-          console.error("Invalid signal:", msg.data);
-        }
-      };
-
       peer.on('stream', remoteStream => {
         remoteVideo.srcObject = remoteStream;
       });
@@ -82,7 +74,27 @@
       peer.on('error', err => {
         alert("Peer error: " + err.message);
       });
+
+      // Process any messages received before peer was ready
+      while (signalQueue.length > 0) {
+        peer.signal(signalQueue.shift());
+      }
     }
+
+    ws.onmessage = msg => {
+      try {
+        const { room: incomingRoom, signal } = JSON.parse(msg.data);
+        if (incomingRoom === room) {
+          if (peer) {
+            peer.signal(signal);
+          } else {
+            signalQueue.push(signal);
+          }
+        }
+      } catch (e) {
+        console.error("Invalid signal:", msg.data);
+      }
+    };
 
     function requestMedia() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
