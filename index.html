@@ -2,8 +2,9 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>WebRTC:Bysunny</title>
+  <title>WebRTC Video Call</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.socket.io/4.4.1/socket.io.min.js"></script>
   <style>
     body {
       margin: 0;
@@ -52,20 +53,21 @@
   <video id="localVideo" autoplay muted playsinline></video>
 
   <script>
-    // Configuration (replace signalingServer with server.json content if available)
+    // Configuration from server.json
     const serverConfig = {
-      signalingServer: 'wss://free-socket-server.herokuapp.com' // Placeholder; update with server.json or reliable WebSocket URL
+      signalingServer: 'wss://chatme-y4b1.onrender.com' // Your Render server URL
     };
 
     const urlParams = new URLSearchParams(window.location.search);
     const roomId = urlParams.get('room') || 'demo';
+    const username = 'user-' + Math.random().toString(36).substring(2, 8);
     const statusDiv = document.getElementById('status');
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
 
     let localStream;
     let peerConnection;
-    let ws;
+    let socket;
     let connectedUsers = 0;
     let isInitiator = false;
     let reconnectAttempts = 0;
@@ -75,55 +77,77 @@
       statusDiv.textContent = `${message} (Users: ${connectedUsers})`;
     }
 
-    function connectWebSocket() {
-      ws = new WebSocket(serverConfig.signalingServer);
-      
-      ws.onopen = () => {
-        console.log('WebSocket connected');
+    function connectSocket() {
+      socket = io(serverConfig.signalingServer, { transports: ['websocket'], reconnectionAttempts: maxReconnectAttempts });
+
+      socket.on('connect', () => {
+        console.log('Socket.IO connected');
         reconnectAttempts = 0;
         updateStatus('Waiting for peer...');
-        ws.send(JSON.stringify({ type: 'join', room: roomId }));
-      };
+        socket.emit('subscribe', username);
+      });
 
-      ws.onmessage = async (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'peer') {
-            isInitiator = true;
-            await createPeerConnection();
-          } else if (data.type === 'offer') {
-            await createPeerConnection();
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            ws.send(JSON.stringify({ type: 'answer', answer, room: roomId }));
-          } else if (data.type === 'answer') {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-          } else if (data.type === 'candidate') {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-          }
-        } catch (err) {
-          console.error('WebSocket message error:', err);
-          updateStatus('Signaling error');
+      socket.on('subscribed', () => {
+        if (isInitiator) {
+          socket.emit('call', { name: username, target: 'other-' + roomId });
         }
-      };
+      });
 
-      ws.onerror = () => {
-        updateStatus('WebSocket error');
+      socket.on('call', async (content) => {
+        if (content.target === username) {
+          isInitiator = false;
+          await createPeerConnection();
+          socket.emit('callaccepted', { name: username, target: content.name });
+        }
+      });
+
+      socket.on('callaccepted', async (content) => {
+        if (content.target === username && isInitiator) {
+          await createPeerConnection();
+        }
+      });
+
+      socket.on('offer', async (content) => {
+        if (content.target === username) {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(content.offer));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          socket.emit('answer', { name: username, target: content.name, answer });
+        }
+      });
+
+      socket.on('answer', async (content) => {
+        if (content.target === username) {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(content.answer));
+        }
+      });
+
+      socket.on('ice-candidate', async (content) => {
+        if (content.target === username) {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(content.candidate));
+        }
+      });
+
+      socket.on('callerror', (content) => {
+        updateStatus(`Call error: ${content.detail}`);
+      });
+
+      socket.on('connect_error', () => {
+        updateStatus('Socket error');
         attemptReconnect();
-      };
+      });
 
-      ws.onclose = () => {
+      socket.on('disconnect', () => {
         updateStatus('Disconnected');
         attemptReconnect();
-      };
+      });
     }
 
     function attemptReconnect() {
       if (reconnectAttempts < maxReconnectAttempts) {
         reconnectAttempts++;
         updateStatus(`Reconnecting (${reconnectAttempts}/${maxReconnectAttempts})...`);
-        setTimeout(connectWebSocket, 2000);
+        setTimeout(connectSocket, 2000);
       } else {
         updateStatus('Failed to connect to signaling server');
       }
@@ -135,7 +159,8 @@
         localVideo.srcObject = localStream;
         connectedUsers = 1;
         updateStatus('Waiting for peer...');
-        connectWebSocket();
+        isInitiator = roomId.endsWith('initiator');
+        connectSocket();
       } catch (err) {
         console.error('Media error:', err);
         updateStatus('Media error');
@@ -147,8 +172,7 @@
       peerConnection = new RTCPeerConnection({
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          // Add TURN server credentials here if available
+          { urls: 'stun:stun1.l.google.com:19302' }
           // { urls: 'turn:global.turn.twilio.com:3478', username: 'your-username', credential: 'your-credential' }
         ]
       });
@@ -165,7 +189,7 @@
 
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
-          ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate, room: roomId }));
+          socket.emit('ice-candidate', { name: username, target: 'other-' + roomId, candidate: event.candidate });
         }
       };
 
@@ -183,12 +207,12 @@
       if (isInitiator) {
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
-        ws.send(JSON.stringify({ type: 'offer', offer, room: roomId }));
+        socket.emit('offer', { name: username, target: 'other-' + roomId, offer });
       }
     }
 
     window.addEventListener('beforeunload', () => {
-      if (ws) ws.close();
+      if (socket) socket.disconnect();
       if (peerConnection) peerConnection.close();
       if (localStream) localStream.getTracks().forEach(track => track.stop());
     });
