@@ -2,9 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>PeerJS Video Call</title>
+  <title>WebRTC Video Call</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     body {
       margin: 0;
@@ -12,11 +11,9 @@
       overflow: hidden;
       font-family: Arial, sans-serif;
     }
-
     video {
       background: #000;
     }
-
     #remoteVideo {
       position: fixed;
       top: 0;
@@ -25,7 +22,6 @@
       height: 100%;
       object-fit: cover;
     }
-
     #localVideo {
       position: fixed;
       bottom: 10px;
@@ -38,7 +34,6 @@
       border-radius: 8px;
       box-shadow: 0 0 10px rgba(255,255,255,0.3);
     }
-
     #status {
       position: fixed;
       top: 10px;
@@ -59,19 +54,17 @@
   <script>
     const urlParams = new URLSearchParams(window.location.search);
     const roomId = urlParams.get('room') || 'demo';
-
-    const remoteVideo = document.getElementById('remoteVideo');
-    const localVideo = document.getElementById('localVideo');
     const statusDiv = document.getElementById('status');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
 
     let localStream;
-    let peer;
-    let call;
-    let isInitiator = false;
+    let peerConnection;
+    let ws;
     let connectedUsers = 0;
+    let isInitiator = false;
 
     function updateStatus(message) {
-      connectedUsers = call && call.open ? 2 : 1;
       statusDiv.textContent = `${message} (Users: ${connectedUsers})`;
     }
 
@@ -79,79 +72,87 @@
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localVideo.srcObject = localStream;
+        connectedUsers = 1;
         updateStatus('Waiting for peer...');
 
-        peer = new Peer({
-          host: '/',
-          path: '/peerjs',
-          config: {
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
-            ]
+        ws = new WebSocket('wss://socketsbay.com/wss/v2/1/demo/');
+        ws.onopen = () => {
+          console.log('WebSocket connected');
+          ws.send(JSON.stringify({ type: 'join', room: roomId }));
+        };
+
+        ws.onmessage = async (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type === 'peer') {
+            isInitiator = true;
+            await createPeerConnection();
+          } else if (data.type === 'offer') {
+            await createPeerConnection();
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            ws.send(JSON.stringify({ type: 'answer', answer, room: roomId }));
+          } else if (data.type === 'answer') {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+          } else if (data.type === 'candidate') {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
           }
-        });
+        };
 
-        peer.on('open', id => {
-          console.log('Peer ID:', id);
-          updateStatus(`Your ID: ${id}. Share link: ${window.location.href}`);
-
-          isInitiator = id !== roomId;
-          if (isInitiator) {
-            console.log('Initiating call to', roomId);
-            setTimeout(() => {
-              call = peer.call(roomId, localStream);
-              if (call) handleCall(call);
-              else console.error('Failed to initiate call');
-            }, 1000);
-          }
-        });
-
-        peer.on('call', incomingCall => {
-          console.log('Received incoming call');
-          updateStatus('Connected');
-          incomingCall.answer(localStream);
-          handleCall(incomingCall);
-        });
-
-        peer.on('error', err => {
-          console.error('Peer error:', err);
-          updateStatus(`Error: ${err.type}`);
-          alert(`PeerJS error: ${err.type}`);
-        });
+        ws.onerror = () => updateStatus('WebSocket error');
+        ws.onclose = () => updateStatus('Disconnected');
 
       } catch (err) {
-        console.error('Media error:', err);
         updateStatus('Media error');
-        alert(`Failed to access camera/mic: ${err.message}`);
+        alert(`Camera/mic error: ${err.message}`);
       }
     }
 
-    function handleCall(activeCall) {
-      call = activeCall;
-      call.on('stream', remoteStream => {
+    async function createPeerConnection() {
+      peerConnection = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+      });
+
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+      peerConnection.ontrack = (event) => {
         if (!remoteVideo.srcObject) {
-          remoteVideo.srcObject = remoteStream;
+          remoteVideo.srcObject = event.streams[0];
+          connectedUsers = 2;
           updateStatus('Connected');
-          console.log('Remote stream received');
         }
-      });
+      };
 
-      call.on('close', () => {
-        console.log('Call ended');
-        remoteVideo.srcObject = null;
-        updateStatus('Call ended. Waiting for peer...');
-      });
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate, room: roomId }));
+        }
+      };
 
-      call.on('error', err => {
-        console.error('Call error:', err);
-        updateStatus('Call error');
-      });
+      peerConnection.onconnectionstatechange = () => {
+        if (peerConnection.connectionState === 'connected') {
+          connectedUsers = 2;
+          updateStatus('Connected');
+        } else if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+          connectedUsers = 1;
+          updateStatus('Call ended. Waiting for peer...');
+          remoteVideo.srcObject = null;
+        }
+      };
+
+      if (isInitiator) {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        ws.send(JSON.stringify({ type: 'offer', offer, room: roomId }));
+      }
     }
 
     window.addEventListener('beforeunload', () => {
-      if (call) call.close();
-      if (peer) peer.destroy();
+      if (ws) ws.close();
+      if (peerConnection) peerConnection.close();
       if (localStream) localStream.getTracks().forEach(track => track.stop());
     });
 
