@@ -1,116 +1,161 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>WebRTC via Socket.IO</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="utf-8">
+  <title>PeerJS Video Call</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
-    body { margin: 0; background: black; overflow: hidden; }
-    #remoteVideo {
-      position: fixed; top: 0; left: 0;
-      width: 100%; height: 100%;
-      object-fit: cover;
+    body {
+      margin: 0;
+      background: #000;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+
+    video {
       background: #000;
     }
+
+    #remoteVideo {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
     #localVideo {
-      position: fixed; bottom: 10px; right: 10px;
-      width: 120px; height: 160px;
-      border: 2px solid white; object-fit: cover; z-index: 10;
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      width: 120px;
+      height: 160px;
+      border: 2px solid white;
+      z-index: 10;
+      object-fit: cover;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(255,255,255,0.3);
+    }
+
+    #status {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      color: white;
+      z-index: 10;
+      background: rgba(0,0,0,0.5);
+      padding: 5px 10px;
+      border-radius: 4px;
     }
   </style>
 </head>
 <body>
+  <div id="status">Connecting... (Users: 0)</div>
   <video id="remoteVideo" autoplay playsinline></video>
   <video id="localVideo" autoplay muted playsinline></video>
 
-  <script src="https://cdn.socket.io/4.4.1/socket.io.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/simple-peer@9/simplepeer.min.js"></script>
   <script>
     const urlParams = new URLSearchParams(window.location.search);
-    const callerId = urlParams.get('calling');
-    const receiverId = urlParams.get('reciver'); // NOTE: keep this typo unless backend fixed
-    const myId = callerId || receiverId;
-    const targetId = callerId ? receiverId : callerId;
-    const isInitiator = !!callerId;
+    const roomId = urlParams.get('room') || 'demo';
 
-    const socket = io('ws://cubic-receptive-drop.glitch.me');
-    const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
+    const localVideo = document.getElementById('localVideo');
+    const statusDiv = document.getElementById('status');
 
+    let localStream;
     let peer;
-    let localStream = null;
-    let isSubscribed = false;
-    let hasStarted = false;
+    let call;
+    let isInitiator = false;
+    let connectedUsers = 0;
 
-    // Start peer connection once we're subscribed + got camera
-    function tryStartPeer() {
-      if (hasStarted || !isSubscribed || !localStream) return;
-      console.log('[Peer] Creating peer now');
-      hasStarted = true;
+    function updateStatus(message) {
+      connectedUsers = call && call.open ? 2 : 1;
+      statusDiv.textContent = `${message} (Users: ${connectedUsers})`;
+    }
 
-      peer = new SimplePeer({
-        initiator: isInitiator,
-        trickle: false,
-        stream: localStream
-      });
+    async function start() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localVideo.srcObject = localStream;
+        updateStatus('Waiting for peer...');
 
-      peer.on('signal', data => {
-        console.log('[Signal] Sending:', data.type);
-        socket.emit(data.type, {
-          target: targetId,
-          name: myId,
-          data
+        peer = new Peer({
+          host: '/',
+          path: '/peerjs',
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
         });
+
+        peer.on('open', id => {
+          console.log('Peer ID:', id);
+          updateStatus(`Your ID: ${id}. Share link: ${window.location.href}`);
+
+          isInitiator = id !== roomId;
+          if (isInitiator) {
+            console.log('Initiating call to', roomId);
+            setTimeout(() => {
+              call = peer.call(roomId, localStream);
+              if (call) handleCall(call);
+              else console.error('Failed to initiate call');
+            }, 1000);
+          }
+        });
+
+        peer.on('call', incomingCall => {
+          console.log('Received incoming call');
+          updateStatus('Connected');
+          incomingCall.answer(localStream);
+          handleCall(incomingCall);
+        });
+
+        peer.on('error', err => {
+          console.error('Peer error:', err);
+          updateStatus(`Error: ${err.type}`);
+          alert(`PeerJS error: ${err.type}`);
+        });
+
+      } catch (err) {
+        console.error('Media error:', err);
+        updateStatus('Media error');
+        alert(`Failed to access camera/mic: ${err.message}`);
+      }
+    }
+
+    function handleCall(activeCall) {
+      call = activeCall;
+      call.on('stream', remoteStream => {
+        if (!remoteVideo.srcObject) {
+          remoteVideo.srcObject = remoteStream;
+          updateStatus('Connected');
+          console.log('Remote stream received');
+        }
       });
 
-      peer.on('stream', remoteStream => {
-        console.log('[Peer] Got remote stream!');
-        remoteVideo.srcObject = remoteStream;
+      call.on('close', () => {
+        console.log('Call ended');
+        remoteVideo.srcObject = null;
+        updateStatus('Call ended. Waiting for peer...');
       });
 
-      peer.on('error', err => {
-        console.error('Peer error:', err);
+      call.on('error', err => {
+        console.error('Call error:', err);
+        updateStatus('Call error');
       });
     }
 
-    // Handle incoming signaling
-    socket.on('offer', msg => {
-      console.log('[Signal] Got offer');
-      if (peer) peer.signal(msg.data);
+    window.addEventListener('beforeunload', () => {
+      if (call) call.close();
+      if (peer) peer.destroy();
+      if (localStream) localStream.getTracks().forEach(track => track.stop());
     });
 
-    socket.on('answer', msg => {
-      console.log('[Signal] Got answer');
-      if (peer) peer.signal(msg.data);
-    });
-
-    socket.on('ice-candidate', msg => {
-      console.log('[Signal] Got ICE candidate');
-      if (peer) peer.signal(msg.data);
-    });
-
-    // Subscribe and get confirmation
-    socket.on('connect', () => {
-      console.log('[Socket] Connected');
-      socket.emit('subscribe', myId);
-    });
-
-    socket.on('subscribed', () => {
-      console.log('[Socket] Subscribed as:', myId);
-      isSubscribed = true;
-      tryStartPeer();
-    });
-
-    // Get media
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        localVideo.srcObject = stream;
-        localStream = stream;
-        tryStartPeer();
-      })
-      .catch(err => {
-        alert("Camera/mic access failed:\n" + err.message);
-        console.error(err);
-      });
+    start();
   </script>
 </body>
 </html>
